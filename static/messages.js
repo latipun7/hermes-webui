@@ -846,31 +846,24 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
   function _splitThinkFromContent(rawContent, existingReasoning){
     const text=String(rawContent||'');
     if(!text) return {reasoning:existingReasoning||'', content:text};
+    // Extract exactly ONE leading think block (after lstrip), matching the
+    // streaming renderer's _streamDisplay/_parseStreamState semantics EXACTLY —
+    // both strip only the first leading block. A closed <think>...</think> that
+    // appears MID-BODY is, by the renderer's definition, visible content (e.g. a
+    // literal tag inside a fenced code block); a whole-body scan would silently
+    // move it into m.reasoning. And looping multiple leading blocks here (when the
+    // renderer strips only one) would make persisted/reload content diverge from
+    // the live stream. So: leading, single, partial-open left intact (#3455 review, Codex).
     let extracted='';
     let remaining=text;
-    let changed=true;
-    // Only extract think blocks at the LEADING position (after lstrip), matching
-    // the streaming renderer's _streamDisplay/_parseStreamState semantics exactly.
-    // A closed <think>...</think> that appears MID-BODY is, by the renderer's own
-    // definition, visible content (e.g. a literal tag inside a fenced code block) —
-    // a whole-body scan would silently move that visible text into m.reasoning and
-    // empty the code block (#3455 review, Codex). The loop repeats so consecutive
-    // leading blocks are still all captured.
-    for(let safety=0; changed && safety<16; safety++){
-      changed=false;
-      const trimmed=remaining.trimStart();
-      const relOffset=remaining.length-trimmed.length;
-      for(const {open,close} of _thinkPairs){
-        if(!trimmed.startsWith(open)) continue;
-        const ci=trimmed.indexOf(close,open.length);
-        if(ci===-1) continue; // partial open — leave intact for the live renderer
-        const block=trimmed.slice(open.length,ci);
-        extracted=extracted?extracted+'\n\n'+block:block;
-        // The leading run is reasoning; everything after the close is content.
-        remaining=trimmed.slice(ci+close.length).replace(/^\s+/,'');
-        changed=true;
-        break;
-      }
+    const trimmed=text.trimStart();
+    for(const {open,close} of _thinkPairs){
+      if(!trimmed.startsWith(open)) continue;
+      const ci=trimmed.indexOf(close,open.length);
+      if(ci===-1) break; // partial open — leave intact for the live renderer
+      extracted=trimmed.slice(open.length,ci);
+      remaining=trimmed.slice(ci+close.length).replace(/^\s+/,'');
+      break;
     }
     if(!extracted) return {reasoning:existingReasoning||'', content:rawContent};
     const finalReasoning=existingReasoning?existingReasoning+'\n\n'+extracted:extracted;

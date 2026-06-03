@@ -120,12 +120,13 @@ def test_existing_reasoning_is_merged_not_overwritten(driver):
     assert r["reasoning"] == "from on_reasoning stream\n\nextra"
 
 
-def test_consecutive_leading_blocks_all_extracted(driver):
-    """Consecutive LEADING think blocks (back-to-back at the start) are all
-    captured by the repeating loop; a block after real content is not."""
+def test_single_leading_block_extracted_matches_renderer(driver):
+    """Only ONE leading think block is extracted — matching _streamDisplay/
+    _parseStreamState which strip a single leading block. A second consecutive
+    block stays in content so persisted state never diverges from the live stream."""
     r = _split(driver, "<think>a</think><think>b</think>the answer")
-    assert r["content"] == "the answer"
-    assert r["reasoning"] == "a\n\nb"
+    assert r["content"] == "<think>b</think>the answer"
+    assert r["reasoning"] == "a"
 
 
 def test_block_after_content_not_extracted(driver):
