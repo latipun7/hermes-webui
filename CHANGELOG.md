@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.230] — 2026-06-03 — Release GX (stage-p14 — extract <think> blocks to m.reasoning + LLM Wiki last-writer)
+
+### Fixed
+- Assistant message `<think>…</think>` blocks are now extracted into `m.reasoning` at persist time (both streaming inflight state and the SSE `done` finalization), instead of being stored inline in `m.content`. Reasoning-only providers such as `MiniMax-M3` (OpenAI-compat) previously left the thinking trace inside the assistant content, bloating persisted session files by 30–50% and bypassing the `m.reasoning` field the thinking card reads on reload. A new `_splitThinkFromContent()` helper (in `static/messages.js`) handles all three known tag pairs (`<think>…`, `<|channel>thought…<channel|>`, `<|turn|>thinking…<turn|>`), preserves any pre-existing `m.reasoning` from a separate `on_reasoning` stream, leaves partial/unclosed blocks intact for the live renderer, never drops real content before/after a block, and supports multiple complete blocks via bounded iteration. No rendering change — the streaming and persisted-state render paths already consume the split shape (#3455 part 1, @gsurenull).
+- The LLM Wiki status panel's `Last writer` field is now populated (it always showed `Not available` since the panel shipped in #1257). The reader uses a 3-tier fallback — most-recent page frontmatter (`updated_by`/`writer`/`author`), the most recent `log.md` action verb, then a static `ai-agent` fallback — and reads only frontmatter + log headings, never page bodies, preserving the private-safe status contract (#3455 part 2, @gsurenull; closes #1257).
+
 ## [v0.51.229] — 2026-06-03 — Release GW (stage-p13 — /model never silently snaps a versioned name to a -tier variant)
 
 ### Fixed
