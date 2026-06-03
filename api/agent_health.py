@@ -307,6 +307,9 @@ def _runtime_detail_subset(runtime_status: dict[str, Any] | None) -> dict[str, A
 _REMOTE_PROBE_TIMEOUT_S: float = 2.0
 _REMOTE_PROBE_CACHE_TTL_S: float = 5.0
 _REMOTE_PROBE_PATHS: tuple[str, ...] = ("/health/detailed", "/health", "/v1/health")
+# A gateway health payload is small JSON; cap the 2xx body read so a large or
+# slow-trickled remote response can't hang /api/health/agent or balloon memory.
+_REMOTE_PROBE_BODY_LIMIT_BYTES: int = 64 * 1024
 
 _remote_probe_lock = threading.Lock()
 _remote_probe_cache: dict[str, Any] = {"url": None, "expires_at": 0.0, "result": None}
@@ -318,11 +321,22 @@ def _remote_gateway_base_url() -> str | None:
     Priority: GATEWAY_HEALTH_URL > HERMES_GATEWAY_HEALTH_URL > HERMES_API_URL.
     Returns ``None`` when no env var is set so the caller falls through to
     local PID/state checks.
+
+    Any of these env vars may legitimately point AT a health endpoint
+    (e.g. ``GATEWAY_HEALTH_URL=http://host:8642/health``). Since the probe
+    appends ``/health/detailed`` etc. to the returned base, strip a trailing
+    health-path suffix first so we don't build ``/health/health/detailed``
+    (mirrors the normalization in api/updates.py).
     """
     for var in ("GATEWAY_HEALTH_URL", "HERMES_GATEWAY_HEALTH_URL", "HERMES_API_URL"):
         val = os.environ.get(var, "").strip()
         if val:
-            return val.rstrip("/")
+            base = val.rstrip("/")
+            for suffix in ("/health/detailed", "/health", "/v1/health", "/status"):
+                if base.endswith(suffix):
+                    base = base[: -len(suffix)].rstrip("/")
+                    break
+            return base
     return None
 
 
@@ -339,7 +353,11 @@ def _http_probe(url: str, timeout_s: float) -> tuple[bool, int | None, str | Non
         with urllib_request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 - trusted env var URL
             status = getattr(resp, "status", None) or resp.getcode()
             ok = 200 <= int(status) < 300
-            body = resp.read() if ok else None
+            # Cap the body read: we only need a small JSON health payload, and an
+            # unbounded resp.read() on a large/trickled 2xx body could hang the
+            # /api/health/agent handler or balloon memory. Read one byte over the
+            # cap so the caller can detect (and skip) an oversized body.
+            body = resp.read(_REMOTE_PROBE_BODY_LIMIT_BYTES + 1) if ok else None
             return (ok, int(status), None, body)
     except urllib_error.HTTPError as exc:
         return (False, int(exc.code), "HTTPError", None)
@@ -375,13 +393,16 @@ def _probe_remote_gateway(base_url: str, *, now: float | None = None) -> dict[st
                 "endpoint": base_url + path,
                 "status_code": status,
             }
-            if body:
+            if body and len(body) <= _REMOTE_PROBE_BODY_LIMIT_BYTES:
                 try:
                     data = json.loads(body)
                     if isinstance(data, dict) and "gateway_state" in data:
                         details["gateway_state"] = data["gateway_state"]
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
+            # An over-cap body (len > limit, i.e. the +1 sentinel byte was read)
+            # is treated as "alive but no parseable gateway_state" — we still
+            # report the gateway as up, just without the detailed state.
             payload = {
                 "alive": True,
                 "checked_at": _checked_at(),

@@ -24,8 +24,10 @@ class _FakeResp:
     def getcode(self) -> int:
         return self.status
 
-    def read(self) -> bytes:
-        return self._body
+    def read(self, amt: int | None = None) -> bytes:
+        if amt is None:
+            return self._body
+        return self._body[:amt]
 
     def __enter__(self):
         return self
@@ -173,3 +175,49 @@ def test_default_url_when_no_env(monkeypatch):
 
     assert payload["alive"] is None
     assert payload["details"]["reason"] == "gateway_status_unavailable"
+
+
+def test_gateway_health_url_with_health_suffix_is_normalized(monkeypatch):
+    """A gateway env var that already points AT a health path must not produce
+    a doubled path like /health/health/detailed (#3355 Codex follow-up)."""
+    monkeypatch.delenv("HERMES_API_URL", raising=False)
+    monkeypatch.delenv("HERMES_GATEWAY_HEALTH_URL", raising=False)
+    monkeypatch.setenv("GATEWAY_HEALTH_URL", "http://gw:8642/health")
+    probed: list[str] = []
+
+    def fake_urlopen(req, timeout=None):
+        probed.append(req.full_url)
+        if req.full_url == "http://gw:8642/health/detailed":
+            return _FakeResp(200, body=json.dumps({"gateway_state": "running"}).encode())
+        return _FakeResp(404)
+
+    with mock.patch.object(agent_health.urllib_request, "urlopen", fake_urlopen):
+        payload = agent_health.build_agent_health_payload()
+
+    assert all("/health/health" not in u for u in probed), probed
+    assert "http://gw:8642/health/detailed" in probed
+    assert payload["alive"] is True
+    assert payload["details"].get("gateway_state") == "running"
+
+
+def test_oversized_remote_body_does_not_hang_and_skips_parse(monkeypatch):
+    """A 2xx response with a huge body must be capped (not read unbounded) and
+    still report the gateway alive, just without a parsed gateway_state."""
+    monkeypatch.setenv("HERMES_API_URL", "http://gateway:8080")
+    huge = b"x" * (agent_health._REMOTE_PROBE_BODY_LIMIT_BYTES * 4)
+    captured_amt: list[int | None] = []
+
+    class _HugeResp(_FakeResp):
+        def read(self, amt: int | None = None):
+            captured_amt.append(amt)
+            return huge[:amt] if amt is not None else huge
+
+    def fake_urlopen(req, timeout=None):
+        return _HugeResp(200, body=huge)
+
+    with mock.patch.object(agent_health.urllib_request, "urlopen", fake_urlopen):
+        payload = agent_health.build_agent_health_payload()
+
+    assert captured_amt and all(a is not None for a in captured_amt)
+    assert payload["alive"] is True
+    assert "gateway_state" not in payload["details"]
