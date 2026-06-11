@@ -260,7 +260,7 @@ def test_session_export_rejects_session_from_inactive_profile():
     handler = _ExportCaptureHandler()
     parsed = urlparse("/api/session/export?session_id=foreign_export_001")
     with patch("api.routes.get_session", return_value=foreign), \
-         patch("api.profiles.get_active_profile_name", return_value="default"), \
+         patch("api.routes.get_active_profile_name", return_value="default"), \
          patch("api.routes.bad", side_effect=fake_bad):
         routes._handle_session_export(handler, parsed)
 
@@ -282,7 +282,8 @@ def test_session_export_allows_session_from_active_profile():
     handler = _ExportCaptureHandler()
     parsed = urlparse("/api/session/export?session_id=active_export_001")
     with patch("api.routes.get_session", return_value=active), \
-         patch("api.profiles.get_active_profile_name", return_value="default"):
+         patch("api.routes.get_active_profile_name", return_value="default"), \
+         patch("api.routes.redact_session_data", side_effect=lambda data: data):
         routes._handle_session_export(handler, parsed)
 
     assert handler.status == 200
