@@ -6255,7 +6255,7 @@ async function filterSettings(query) {
   const resultsEl = $('settingsSearchResults');
   if (!resultsEl) return;
   const q = (query || '').trim().toLowerCase();
-  if (!q) { resultsEl.style.display = 'none'; resultsEl.innerHTML = ''; return; }
+  if (!q) { ++_settingsSearchSeq; resultsEl.style.display = 'none'; resultsEl.innerHTML = ''; return; }
   const seq = ++_settingsSearchSeq;
   await _buildSettingsIndex();
   // A newer keystroke superseded this query while the index was building.
@@ -9062,8 +9062,8 @@ function loadGatewayStatus(){
 }
 // Load MCP servers when system settings tab opens
 const _origSwitchSettings=switchSettingsSection;
-switchSettingsSection=function(name){
-  _origSwitchSettings(name);
+switchSettingsSection=function(name, opts){
+  _origSwitchSettings(name, opts);
   if(name==='preferences') updateNotificationPermissionStatus();
   if(name==='system'){loadMcpServers();loadMcpTools();loadGatewayStatus();}
 };
