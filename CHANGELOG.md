@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.549] — 2026-06-21 — Release TH (mobile reloads recover after compression rotation)
+
+### Fixed
+
+- **A mobile reload during context compression no longer makes the conversation look lost.** When a long turn is rotating through context compression and the browser reloads (common on mobile), it could come back pointing at a hidden pre-compression snapshot — so the current conversation appeared to vanish. `GET /api/session` now surfaces the visible continuation for such a hidden snapshot, and the UI follows it (bounded across repeated-compression hops, profile-scoped so it never resolves a session in another profile, and it only updates the URL/storage once the continuation actually loads). Thanks @george-andra.
+
 ## [v0.51.548] — 2026-06-21 — Release TG (extension load diagnostics)
 
 ### Added
