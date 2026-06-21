@@ -9130,15 +9130,23 @@ function _anchorSceneTransparentNodeForRow(row, opts){
   node.setAttribute('data-anchor-source-event-type',String(row.source_event_type||''));
   return node;
 }
-// Whitespace-insensitive compare so a scene prose row that is the final answer
+// Whitespace-insensitive compare so a scene prose row that IS the final answer
 // (possibly re-wrapped) is recognized and not duplicated against the segment.
+// Codex #4568: the prefix tolerance must NOT be able to suppress a DISTINCT
+// intermediate progress row that merely happens to be a prefix of the final
+// answer (e.g. "I found the issue and I'm applying the fix now." when the final
+// answer starts with that sentence). So require exact normalized equality, with
+// a prefix tolerance allowed ONLY when the two strings are near-equal length
+// (>=0.9 ratio, shorter >=80 chars) — i.e. genuine re-wrap/truncation of the
+// SAME text, never a short intermediate sentence that prefixes a long answer.
 function _anchorSceneProseMatchesFinalAnswer(proseText, finalAnswer){
   const norm=(s)=>String(s||'').replace(/\s+/g,' ').trim();
   const a=norm(proseText), b=norm(finalAnswer);
   if(!a||!b) return false;
   if(a===b) return true;
-  // tolerate trailing punctuation / minor truncation differences
-  return a.length>=40 && b.length>=40 && (a.startsWith(b)||b.startsWith(a));
+  if(!(a.startsWith(b)||b.startsWith(a))) return false;
+  const shorter=Math.min(a.length,b.length), longer=Math.max(a.length,b.length);
+  return shorter>=80 && (shorter/longer)>=0.9;
 }
 function _anchorSceneWorklogGroup(blocks, opts){
   if(!blocks) return null;

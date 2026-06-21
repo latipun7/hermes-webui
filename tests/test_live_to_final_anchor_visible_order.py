@@ -713,9 +713,14 @@ def test_transparent_anchor_intermediate_prose_preserved_only_final_answer_suppr
         "not dropped"
     )
     assert "type:'prose'" in row
-    # the matcher exists and compares whitespace-insensitively with a startsWith tolerance
+    # the matcher exists and compares whitespace-insensitively; the prefix
+    # tolerance is length-ratio-guarded so a short intermediate sentence that
+    # merely prefixes a long final answer is NOT suppressed (Codex #4568).
     assert "replace(/\\s+/g,' ')" in match
     assert "startsWith" in match
+    assert "0.9" in match and ">=80" in match.replace(" ", ""), (
+        "prefix tolerance must be guarded by a near-equal length ratio, not a bare >=40 floor"
+    )
     # guard against the regression where ALL prose rows were dropped:
     assert "// avoid duplicating the answer" in row or "duplicates the final answer" in row
 
