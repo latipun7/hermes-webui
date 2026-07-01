@@ -5,6 +5,8 @@
 
 ### Fixed
 
+- **Model-picker fixes: MoA presets and the Copilot catalog no longer clobber other providers' model allowlists.** Selecting a MoA preset now re-resolves cleanly per turn (and a malformed preset can't crash resolution), and the Copilot models-as-settings-map handling is scoped to Copilot only — so a `providers.<id>.models` allowlist on any other built-in provider (e.g. `providers.anthropic.models`, #644) is honored again instead of being silently disabled. Provider dedup/canonicalization (#1568/#2245/#2399) and the #1855 bare-model fast path are preserved. Thanks @promptclickrun. (#5301)
+
 - **No more 57–70 s cold-startup stalls from the profile skills-stats thundering herd.** At container boot the frontend fires several profile-data requests at once; with `ThreadingHTTPServer` (one thread per request) they all missed the empty skills-stats cache simultaneously and each walked + parsed every profile's skill tree, stacking thousands of concurrent `stat()` calls under Docker's overlay2 filesystem. `_get_profile_skills_stats()` now serializes per-profile with double-checked locking (concurrent misses on one profile collapse to a single compute; independent profiles still compute in parallel), and `list_profiles_api()` single-flights the row build under `_LIST_PROFILES_CACHE_LOCK` so one thread builds while the rest wait for the cached result. The every-call cheap mtime probe (the #4783 out-of-band change-detection contract) is unchanged. (#5364)
 
 ## [v0.51.792] — 2026-07-01
