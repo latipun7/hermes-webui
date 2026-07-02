@@ -13940,6 +13940,9 @@ def handle_post(handler, parsed) -> bool:
     if parsed.path == "/api/file/save":
         return _handle_file_save(handler, body)
 
+    if parsed.path == "/api/file/office-save":
+        return _handle_office_file_save(handler, body)
+
     if parsed.path == "/api/file/create":
         return _handle_file_create(handler, body)
 
@@ -15470,6 +15473,10 @@ def _handle_escape_file_read(handler, parsed):
         return bad(handler, _sanitize_error(exc), 404)
     except EscapeAuthorizationExpiredError as exc:
         return bad(handler, _sanitize_error(exc), 403)
+    except ImportError as exc:
+        # Optional Office parsers absent on a lean install — mirror
+        # _handle_file_read: a 503 with the install hint, not a 500 traceback.
+        return bad(handler, _sanitize_error(exc), 503)
     except ValueError as exc:
         return bad(handler, _sanitize_error(exc), 404)
 
@@ -17331,8 +17338,21 @@ def _handle_file_read(handler, parsed):
         return bad(handler, "path is required")
     try:
         return j(handler, read_file_content(Path(s.workspace), rel))
+    except ImportError as e:
+        return bad(handler, str(e), 503)
     except (FileNotFoundError, ValueError) as e:
         return bad(handler, _sanitize_error(e), 404)
+
+
+def _read_anchored_file_bytes(ws_root: Path, target: Path) -> bytes:
+    fd = open_anchored_fd(ws_root, target, want_dir=False)
+    with os.fdopen(fd, "rb", closefd=True) as fh:
+        st = os.fstat(fh.fileno())
+        if not _stat.S_ISREG(st.st_mode):
+            raise FileNotFoundError(f"Not a file: {target}")
+        if st.st_size > MAX_FILE_BYTES:
+            raise ValueError(f"File too large ({st.st_size} bytes, max {MAX_FILE_BYTES})")
+        return fh.read(MAX_FILE_BYTES + 1)
 
 
 def _handle_approval_pending(handler, parsed):
@@ -20800,6 +20820,8 @@ def _handle_file_save(handler, body):
             return bad(handler, "File not found", 404)
         if target.is_dir():
             return bad(handler, "Cannot save: path is a directory")
+        if Path(str(body["path"])).suffix.lower() in {".docx", ".xlsx", ".pptx"}:
+            return bad(handler, "Use /api/file/office-save for Office documents")
         data = str(body.get("content", "")).encode("utf-8")
         fd = open_anchored_write_fd(ws_root, target)
         with os.fdopen(fd, "wb", closefd=True) as fh:
@@ -20807,6 +20829,41 @@ def _handle_file_save(handler, body):
         return j(
             handler, {"ok": True, "path": body["path"], "size": len(data)}
         )
+    except (ValueError, FileNotFoundError, PermissionError, OSError) as e:
+        return bad(handler, _sanitize_error(e))
+
+
+def _handle_office_file_save(handler, body):
+    try:
+        require(body, "session_id", "path")
+    except ValueError as e:
+        return bad(handler, str(e))
+    try:
+        s = get_session_for_file_ops(body["session_id"])
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+    try:
+        ws_root = Path(s.workspace)
+        target = safe_resolve(ws_root, body["path"])
+        if (ws_root / body["path"]).is_symlink():
+            return bad(handler, "Cannot save to a symlinked entry")
+        if not target.exists():
+            return bad(handler, "File not found", 404)
+        if target.is_dir():
+            return bad(handler, "Cannot save: path is a directory")
+        if Path(str(body["path"])).suffix.lower() not in {".docx", ".xlsx", ".pptx"}:
+            return bad(handler, "Office save is only available for .docx, .xlsx, and .pptx files")
+        from api.office_documents import save_office_document
+
+        current_bytes = _read_anchored_file_bytes(ws_root, target)
+        preview, updated_bytes = save_office_document(body["path"], current_bytes, body.get("content", ""))
+        fd = open_anchored_write_fd(ws_root, target)
+        with os.fdopen(fd, "wb", closefd=True) as fh:
+            fh.write(updated_bytes)
+        preview.update({"ok": True, "path": body["path"], "size": len(updated_bytes)})
+        return j(handler, preview)
+    except ImportError as e:
+        return bad(handler, str(e), 503)
     except (ValueError, FileNotFoundError, PermissionError, OSError) as e:
         return bad(handler, _sanitize_error(e))
 
